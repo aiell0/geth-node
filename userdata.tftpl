@@ -1,0 +1,11 @@
+#!/bin/bash
+apt-get update -y
+add-apt-repository -y ppa:ethereum/ethereum
+sudo apt-get install ethereum -y
+mkfs -t ext4 /dev/nvme1n1
+mkdir /ethereum
+mount /dev/nvme1n1 /ethereum
+mkdir ethereum/consensus && ethereum/execution
+mkdir ethereum/consensus/prysm
+cd ethereum/consensus/prysm
+curl https://raw.githubusercontent.com/prysmaticlabs/prysm/master/prysm.sh --output prysm.sh && chmod +x prysm.sh
