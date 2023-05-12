@@ -1,11 +1,152 @@
 #!/bin/bash
 apt-get update -y
 add-apt-repository -y ppa:ethereum/ethereum
-sudo apt-get install ethereum -y
+curl -1sLf 'https://repositories.timber.io/public/vector/cfg/setup/bash.deb.sh' | sudo -E bash
+sudo apt-get install ethereum acl vector -y
 mkfs -t ext4 /dev/nvme1n1
 mkdir /ethereum
 mount /dev/nvme1n1 /ethereum
-mkdir ethereum/consensus && ethereum/execution
+mkdir ethereum/consensus
+mkdir ethereum/execution
 mkdir ethereum/consensus/prysm
 cd ethereum/consensus/prysm
 curl https://raw.githubusercontent.com/prysmaticlabs/prysm/master/prysm.sh --output prysm.sh && chmod +x prysm.sh
+
+mkdir -p /ethereum/tmp
+openssl rand -hex 32 | tr -d "\n" > /ethereum/tmp/jwtsecret
+useradd -s /sbin/nologin -M --system geth
+setfacl -Rm u:geth:rwx /ethereum
+setfacl -Rm d:u:geth:rwx /ethereum
+
+cat << EOF > /etc/systemd/system/geth.service
+[Unit]
+Description=Ethereum Geth Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+User=geth
+RestartSec=2
+ExecStart=/usr/bin/geth --datadir /ethereum --authrpc.jwtsecret /ethereum/tmp/jwtsecret --http --metrics --pprof --pprof.addr=0.0.0.0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl start geth
+
+useradd -s /sbin/nologin -M --system prysm
+setfacl -Rm d:u:prysm:rwx /ethereum
+setfacl -Rm u:prysm:rwx /ethereum
+mkdir /home/prysm
+setfacl -Rm d:u:prysm:rwx /home/prysm
+setfacl -Rm u:prysm:rwx /home/prysm
+
+cat << EOF > /etc/systemd/system/prysm.service
+[Unit]
+Description=Prysm Consensus Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+User=prysm
+RestartSec=2
+ExecStart=/ethereum/consensus/prysm/prysm.sh beacon-chain --accept-terms-of-use --datadir /ethereum --execution-endpoint=http://localhost:8551 --jwt-secret=/ethereum/tmp/jwtsecret
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl start prysm
+
+cat << EOF > /etc/vector/vector.toml
+[sources.geth]
+type = "journald"
+current_boot_only = true
+include_units = ["geth"]
+
+[sources.prysm]
+type = "journald"
+current_boot_only = true
+include_units = ["prysm"]
+
+[sources.vector_logs]
+type = "internal_logs"
+
+[sinks.cloudwatchlogs_geth]
+type = "aws_cloudwatch_logs"
+inputs = [ "geth" ]
+group_name = ""
+stream_name = "geth"
+region = "us-east-1"
+encoding.codec = "logfmt"
+
+[sinks.cloudwatchlogs_vector]
+type = "aws_cloudwatch_logs"
+inputs = [ "vector_logs" ]
+group_name = ""
+stream_name = "vector"
+region = "us-east-1"
+encoding.codec = "logfmt"
+
+[sinks.cloudwatch_logs_prysm]
+type = "aws_cloudwatch_logs"
+inputs = [ "prysm" ]
+group_name = ""
+stream_name = "prysm"
+region = "us-east-1"
+encoding.codec = "logfmt"
+EOF
+
+sed -i -e "s|^group_name *=.*|group_name = \"${cloudwatch_logs_group_name}\"|" /etc/vector/vector.toml
+
+systemctl start vector
+
+sudo groupadd --system prometheus
+sudo useradd -s /sbin/nologin --system -g prometheus prometheus
+sudo mkdir /var/lib/prometheus
+for i in rules rules.d files_sd; do sudo mkdir -p /etc/prometheus/\$\{i\}; done
+mkdir -p /tmp/prometheus && cd /tmp/prometheus
+curl -s https://api.github.com/repos/prometheus/prometheus/releases/latest | grep browser_download_url | grep linux-amd64 | cut -d '"' -f 4 | wget -qi -
+tar xvf prometheus*.tar.gz
+cd prometheus*/
+mv prometheus promtool /usr/local/bin/
+# mv prometheus.yml /etc/prometheus/prometheus.yml
+mv consoles/ console_libraries/ /etc/prometheus/
+# cd $HOME
+
+cat << EOF > /etc/prometheus/prometheus.yml
+# my global config
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "prometheus"
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+
+    static_configs:
+      - targets: ["localhost:9090"]
+EOF
