@@ -29,7 +29,7 @@ Type=simple
 Restart=always
 User=geth
 RestartSec=2
-ExecStart=/usr/bin/geth --datadir /ethereum --authrpc.jwtsecret /ethereum/tmp/jwtsecret --http --metrics --pprof --pprof.addr=0.0.0.0
+ExecStart=/usr/bin/geth --datadir /ethereum --authrpc.jwtsecret /ethereum/tmp/jwtsecret --http --metrics --metrics.expensive --metrics.addr 127.0.0.1
 
 [Install]
 WantedBy=multi-user.target
@@ -55,7 +55,7 @@ Type=simple
 Restart=always
 User=prysm
 RestartSec=2
-ExecStart=/ethereum/consensus/prysm/prysm.sh beacon-chain --accept-terms-of-use --datadir /ethereum --execution-endpoint=http://localhost:8551 --jwt-secret=/ethereum/tmp/jwtsecret
+ExecStart=/ethereum/consensus/prysm/prysm.sh beacon-chain --accept-terms-of-use --datadir /ethereum --execution-endpoint=http://localhost:8551 --jwt-secret=/ethereum/tmp/jwtsecret --pprof
 
 [Install]
 WantedBy=multi-user.target
@@ -74,6 +74,11 @@ type = "journald"
 current_boot_only = true
 include_units = ["prysm"]
 
+[sources.prometheus]
+type = "journald"
+current_boot_only = true
+include_units = ["prometheus"]
+
 [sources.vector_logs]
 type = "internal_logs"
 
@@ -82,7 +87,7 @@ type = "aws_cloudwatch_logs"
 inputs = [ "geth" ]
 group_name = ""
 stream_name = "geth"
-region = "us-east-1"
+region = "${region}"
 encoding.codec = "logfmt"
 
 [sinks.cloudwatchlogs_vector]
@@ -90,7 +95,7 @@ type = "aws_cloudwatch_logs"
 inputs = [ "vector_logs" ]
 group_name = ""
 stream_name = "vector"
-region = "us-east-1"
+region = "${region}"
 encoding.codec = "logfmt"
 
 [sinks.cloudwatch_logs_prysm]
@@ -98,7 +103,15 @@ type = "aws_cloudwatch_logs"
 inputs = [ "prysm" ]
 group_name = ""
 stream_name = "prysm"
-region = "us-east-1"
+region = "${region}"
+encoding.codec = "logfmt"
+
+[sinks.cloudwatch_logs_prometheus]
+type = "aws_cloudwatch_logs"
+inputs = [ "prometheus" ]
+group_name = ""
+stream_name = "prometheus"
+region = "${region}"
 encoding.codec = "logfmt"
 EOF
 
@@ -109,44 +122,68 @@ systemctl start vector
 sudo groupadd --system prometheus
 sudo useradd -s /sbin/nologin --system -g prometheus prometheus
 sudo mkdir /var/lib/prometheus
-for i in rules rules.d files_sd; do sudo mkdir -p /etc/prometheus/\$\{i\}; done
+# for i in rules rules.d files_sd; do sudo mkdir -p /etc/prometheus/\$\{i\}; done
+mkdir -p /etc/prometheus/rules
+mkdir -p /etc/prometheus/rules.d
+mkdir -p /etc/prometheus/files_sd
 mkdir -p /tmp/prometheus && cd /tmp/prometheus
 curl -s https://api.github.com/repos/prometheus/prometheus/releases/latest | grep browser_download_url | grep linux-amd64 | cut -d '"' -f 4 | wget -qi -
 tar xvf prometheus*.tar.gz
 cd prometheus*/
 mv prometheus promtool /usr/local/bin/
-# mv prometheus.yml /etc/prometheus/prometheus.yml
 mv consoles/ console_libraries/ /etc/prometheus/
-# cd $HOME
 
 cat << EOF > /etc/prometheus/prometheus.yml
-# my global config
 global:
-  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
-  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
-  # scrape_timeout is set to the global default (10s).
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'go-ethereum'
 
-# Alertmanager configuration
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-          # - alertmanager:9093
-
-# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
-rule_files:
-  # - "first_rules.yml"
-  # - "second_rules.yml"
-
-# A scrape configuration containing exactly one endpoint to scrape:
-# Here it's Prometheus itself.
 scrape_configs:
-  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
-  - job_name: "prometheus"
-
-    # metrics_path defaults to '/metrics'
-    # scheme defaults to 'http'.
-
+  - job_name: "go-ethereum"
+    scrape_interval: 10s
+    metrics_path: /debug/metrics/prometheus
     static_configs:
-      - targets: ["localhost:9090"]
+      - targets: 
+          - "127.0.0.1:6060"
+        labels:
+          chain: ethereum
 EOF
+
+cat << EOF > /etc/systemd/system/prometheus.service
+[Unit]
+Description=Prometheus
+Documentation=https://prometheus.io/docs/introduction/overview/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecReload=/bin/kill -HUP \$MAINPID
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --web.console.templates=/etc/prometheus/consoles \
+  --web.console.libraries=/etc/prometheus/console_libraries \
+  --web.listen-address=0.0.0.0:9090 \
+  --web.external-url=
+
+SyslogIdentifier=prometheus
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chown -R prometheus:prometheus /etc/prometheus/rules
+chown -R prometheus:prometheus /etc/prometheus/rules.d
+chown -R prometheus:prometheus /etc/prometheus/files_sd
+chmod -R 775 /etc/prometheus/rules
+chmod -R 775 /etc/prometheus/rules.d
+chmod -R 775 /etc/prometheus/files_sd
+chown -R prometheus:prometheus /var/lib/prometheus
+
+systemctl start prometheus

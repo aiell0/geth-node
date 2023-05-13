@@ -10,6 +10,7 @@ terraform {
 provider "aws" {
 }
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "aws_iam_role" "this" {
   name = "geth-nodes"
@@ -57,6 +58,11 @@ resource "aws_iam_role_policy_attachment" "cloudwatch" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
+resource "aws_iam_role_policy_attachment" "aps" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"
+}
+
 resource "aws_iam_instance_profile" "this" {
   name = "geth-instance-profile"
   role = aws_iam_role.this.name
@@ -92,45 +98,31 @@ module "geth_sg" {
       cidr_blocks = "0.0.0.0/0"
     },
     {
-      from_port   = 9900
-      to_port     = 9900
+      from_port   = 9090
+      to_port     = 9090
       protocol    = "tcp"
-      description = "gRPC"
+      description = "Prometheus Web Console"
       cidr_blocks = "0.0.0.0/0"
     },
+  ]
+
+  egress_rules = ["all-all"]
+}
+
+module "grafana_sg" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "~> 4.17.0"
+
+  name        = "geth-grafana-sg"
+  description = "Security group for Geth Grafana instance"
+  vpc_id      = "vpc-04a4b25dd7833470f"
+
+  ingress_with_cidr_blocks = [
     {
-      from_port   = 9091
-      to_port     = 9091
-      protocol    = "tcp"
-      description = "gRPC Web"
-      cidr_blocks = "0.0.0.0/0"
-    },
-    {
-      from_port   = 26657
-      to_port     = 26657
-      protocol    = "tcp"
-      description = "RPC"
-      cidr_blocks = "0.0.0.0/0"
-    },
-    {
-      from_port   = 26656
-      to_port     = 26656
+      from_port   = 443
+      to_port     = 443
       protocol    = "tcp"
       description = "P2P"
-      cidr_blocks = "0.0.0.0/0"
-    },
-    {
-      from_port   = 26660
-      to_port     = 26660
-      protocol    = "tcp"
-      description = "Prometheus"
-      cidr_blocks = "0.0.0.0/0"
-    },
-    {
-      from_port   = 6060
-      to_port     = 6060
-      protocol    = "tcp"
-      description = "pprof"
       cidr_blocks = "0.0.0.0/0"
     },
   ]
@@ -169,6 +161,42 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
+resource "aws_grafana_role_association" "this" {
+  role         = "ADMIN"
+  user_ids     = ["90676d91f3-fb8de10e-4c5e-4d9a-86ce-2a310c19bd01"]
+  workspace_id = aws_grafana_workspace.this.id
+}
+
+resource "aws_grafana_workspace" "this" {
+  account_access_type      = "CURRENT_ACCOUNT"
+  authentication_providers = ["AWS_SSO"]
+  permission_type          = "SERVICE_MANAGED"
+  role_arn                 = aws_iam_role.assume.arn
+  grafana_version = "8.4"
+  name = "geth"
+  vpc_configuration {
+    security_group_ids = [module.grafana_sg.security_group_id]
+    subnet_ids = [var.subnet_id, "subnet-08cf3e0b5412d2f5b"]
+  }
+}
+
+resource "aws_iam_role" "assume" {
+  name = "grafana-assume"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          Service = "grafana.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
 resource "aws_instance" "node" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type
@@ -177,7 +205,7 @@ resource "aws_instance" "node" {
   subnet_id                   = var.subnet_id
   vpc_security_group_ids      = [module.geth_sg.security_group_id]
   key_name                    = "geth"
-  user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name })
+  user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
 
   ebs_block_device {
     delete_on_termination = true
