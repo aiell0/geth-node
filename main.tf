@@ -7,10 +7,30 @@ terraform {
   }
 }
 
-provider "aws" {
-}
-data "aws_caller_identity" "current" {}
+provider "aws" {}
 data "aws_region" "current" {}
+
+data "aws_availability_zones" "available" {
+  state         = "available"
+  exclude_names = ["us-east-1e"] # AMG not supported
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~>4.0"
+
+  name = "validationcloud-test"
+  cidr = "10.5.0.0/16"
+
+  azs = data.aws_availability_zones.available.names
+
+  public_subnets   = ["10.5.0.0/20", "10.5.16.0/20", "10.5.32.0/20", "10.5.48.0/20", "10.5.64.0/20"]
+  private_subnets  = ["10.5.80.0/20", "10.5.96.0/20", "10.5.112.0/20", "10.5.128.0/20", "10.5.144.0/20"]
+  database_subnets = ["10.5.160.0/20", "10.5.176.0/20", "10.5.192.0/20", "10.5.208.0/20", "10.5.224.0/20"]
+
+  enable_nat_gateway = false
+  enable_vpn_gateway = false
+}
 
 resource "aws_iam_role" "this" {
   name = "geth-nodes"
@@ -80,7 +100,7 @@ module "geth_sg" {
 
   name        = "geth-sg"
   description = "Security group for Geth nodes"
-  vpc_id      = "vpc-04a4b25dd7833470f"
+  vpc_id      = module.vpc.vpc_id
 
   ingress_with_cidr_blocks = [
     {
@@ -115,17 +135,7 @@ module "grafana_sg" {
 
   name        = "geth-grafana-sg"
   description = "Security group for Geth Grafana instance"
-  vpc_id      = "vpc-04a4b25dd7833470f"
-
-  ingress_with_cidr_blocks = [
-    {
-      from_port   = 443
-      to_port     = 443
-      protocol    = "tcp"
-      description = "P2P"
-      cidr_blocks = "0.0.0.0/0"
-    },
-  ]
+  vpc_id      = module.vpc.vpc_id
 
   egress_rules = ["all-all"]
 }
@@ -172,12 +182,14 @@ resource "aws_grafana_workspace" "this" {
   authentication_providers = ["AWS_SSO"]
   permission_type          = "SERVICE_MANAGED"
   role_arn                 = aws_iam_role.assume.arn
-  grafana_version = "8.4"
-  name = "geth"
+  grafana_version          = "8.4"
+  name                     = "geth"
+
   vpc_configuration {
     security_group_ids = [module.grafana_sg.security_group_id]
-    subnet_ids = [var.subnet_id, "subnet-08cf3e0b5412d2f5b"]
+    subnet_ids         = module.vpc.public_subnets
   }
+
 }
 
 resource "aws_iam_role" "assume" {
@@ -197,25 +209,73 @@ resource "aws_iam_role" "assume" {
   })
 }
 
-resource "aws_instance" "node" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  associate_public_ip_address = true
-  iam_instance_profile        = aws_iam_instance_profile.this.name
-  subnet_id                   = var.subnet_id
-  vpc_security_group_ids      = [module.geth_sg.security_group_id]
-  key_name                    = "geth"
-  user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
+resource "aws_autoscaling_group" "this" {
+  name                = "geth-nodes"
+  max_size            = 1
+  min_size            = 1
+  desired_capacity    = 1
+  force_delete        = true
+  vpc_zone_identifier = module.vpc.public_subnets
 
-  ebs_block_device {
-    delete_on_termination = true
-    device_name           = "/dev/sdf"
-    iops                  = 10000
-    volume_size           = 2000
-    volume_type           = "gp3"
+  launch_template {
+    id      = aws_launch_template.this.id
+    version = "$Latest"
   }
 
-  tags = {
-    Name = "geth-node"
+  tag {
+    propagate_at_launch = true
+    key                 = "Name"
+    value               = "geth-node"
   }
 }
+
+resource "aws_launch_template" "this" {
+  name                   = "geth-node"
+  description            = "Template for Geth Ethereum Nodes"
+  ebs_optimized          = true
+  image_id               = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  vpc_security_group_ids = [module.geth_sg.security_group_id]
+  user_data              = base64encode(templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name }))
+
+  iam_instance_profile {
+    arn = aws_iam_instance_profile.this.arn
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+  }
+
+
+  block_device_mappings {
+    device_name = "/dev/sdf"
+    ebs {
+      delete_on_termination = true
+      iops                  = 10000
+      volume_size           = 2000
+      volume_type           = "gp3"
+    }
+  }
+}
+
+# resource "aws_instance" "node" {
+#   ami                         = data.aws_ami.ubuntu.id
+#   instance_type               = var.instance_type
+#   associate_public_ip_address = true
+#   iam_instance_profile        = aws_iam_instance_profile.this.name
+#   subnet_id                   = module.vpc.public_subnets[0]
+#   vpc_security_group_ids      = [module.geth_sg.security_group_id]
+#   user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
+#
+#   ebs_block_device {
+#     delete_on_termination = true
+#     device_name           = "/dev/sdf"
+#     iops                  = 10000
+#     volume_size           = 2000
+#     volume_type           = "gp3"
+#   }
+#
+#   tags = {
+#     Name = "geth-node"
+#   }
+# }
