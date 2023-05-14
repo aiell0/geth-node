@@ -117,14 +117,16 @@ module "geth_sg" {
       description = "P2P"
       cidr_blocks = "0.0.0.0/0"
     },
-    {
-      from_port   = 9090
-      to_port     = 9090
-      protocol    = "tcp"
-      description = "Prometheus Web Console"
-      cidr_blocks = "0.0.0.0/0"
-    },
   ]
+
+  ingress_with_source_security_group_id = [
+    {
+      from_port                = 9090
+      to_port                  = 9090
+      protocol                 = "tcp"
+      description              = "Prometheus"
+      source_security_group_id = module.grafana_sg.security_group_id
+  }]
 
   egress_rules = ["all-all"]
 }
@@ -209,73 +211,24 @@ resource "aws_iam_role" "assume" {
   })
 }
 
-resource "aws_autoscaling_group" "this" {
-  name                = "geth-nodes"
-  max_size            = 1
-  min_size            = 1
-  desired_capacity    = 1
-  force_delete        = true
-  vpc_zone_identifier = module.vpc.public_subnets
+resource "aws_instance" "node" {
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.this.name
+  subnet_id                   = module.vpc.public_subnets[0]
+  vpc_security_group_ids      = [module.geth_sg.security_group_id]
+  user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
 
-  launch_template {
-    id      = aws_launch_template.this.id
-    version = "$Latest"
+  ebs_block_device {
+    delete_on_termination = true
+    device_name           = "/dev/sdf"
+    iops                  = 10000
+    volume_size           = 2000
+    volume_type           = "gp3"
   }
 
-  tag {
-    propagate_at_launch = true
-    key                 = "Name"
-    value               = "geth-node"
-  }
-}
-
-resource "aws_launch_template" "this" {
-  name                   = "geth-node"
-  description            = "Template for Geth Ethereum Nodes"
-  ebs_optimized          = true
-  image_id               = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  vpc_security_group_ids = [module.geth_sg.security_group_id]
-  user_data              = base64encode(templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name }))
-
-  iam_instance_profile {
-    arn = aws_iam_instance_profile.this.arn
-  }
-
-  network_interfaces {
-    associate_public_ip_address = true
-  }
-
-
-  block_device_mappings {
-    device_name = "/dev/sdf"
-    ebs {
-      delete_on_termination = true
-      iops                  = 10000
-      volume_size           = 2000
-      volume_type           = "gp3"
-    }
+  tags = {
+    Name = "geth-node"
   }
 }
-
-# resource "aws_instance" "node" {
-#   ami                         = data.aws_ami.ubuntu.id
-#   instance_type               = var.instance_type
-#   associate_public_ip_address = true
-#   iam_instance_profile        = aws_iam_instance_profile.this.name
-#   subnet_id                   = module.vpc.public_subnets[0]
-#   vpc_security_group_ids      = [module.geth_sg.security_group_id]
-#   user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
-#
-#   ebs_block_device {
-#     delete_on_termination = true
-#     device_name           = "/dev/sdf"
-#     iops                  = 10000
-#     volume_size           = 2000
-#     volume_type           = "gp3"
-#   }
-#
-#   tags = {
-#     Name = "geth-node"
-#   }
-# }
