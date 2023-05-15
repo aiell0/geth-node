@@ -118,6 +118,13 @@ module "geth_sg" {
       description = "P2P"
       cidr_blocks = "0.0.0.0/0"
     },
+    {
+      from_port   = 8545
+      to_port     = 8545
+      protocol    = "tcp"
+      description = "JSON RPC"
+      cidr_blocks = "0.0.0.0/0"
+    },
   ]
 
   ingress_with_source_security_group_id = [
@@ -196,6 +203,12 @@ resource "aws_grafana_workspace" "this" {
   provisioner "local-exec" {
     command     = "./bootstrap_grafana.sh ${self.id} ${aws_instance.node.private_ip}"
     working_dir = "scripts"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      vpc_configuration["subnet_ids"]
+    ]
   }
 }
 
