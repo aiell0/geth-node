@@ -28,8 +28,9 @@ module "vpc" {
   private_subnets  = ["10.5.80.0/20", "10.5.96.0/20", "10.5.112.0/20", "10.5.128.0/20", "10.5.144.0/20"]
   database_subnets = ["10.5.160.0/20", "10.5.176.0/20", "10.5.192.0/20", "10.5.208.0/20", "10.5.224.0/20"]
 
-  enable_nat_gateway = false
-  enable_vpn_gateway = false
+  enable_nat_gateway           = false
+  enable_vpn_gateway           = false
+  create_database_subnet_group = false
 }
 
 resource "aws_iam_role" "this" {
@@ -192,6 +193,10 @@ resource "aws_grafana_workspace" "this" {
     subnet_ids         = module.vpc.public_subnets
   }
 
+  provisioner "local-exec" {
+    command     = "./bootstrap_grafana.sh ${self.id} ${aws_instance.node.private_ip}"
+    working_dir = "scripts"
+  }
 }
 
 resource "aws_iam_role" "assume" {
@@ -218,7 +223,7 @@ resource "aws_instance" "node" {
   iam_instance_profile        = aws_iam_instance_profile.this.name
   subnet_id                   = module.vpc.public_subnets[0]
   vpc_security_group_ids      = [module.geth_sg.security_group_id]
-  user_data                   = templatefile("${path.module}/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
+  user_data                   = templatefile("${path.module}/scripts/userdata.tftpl", { cloudwatch_logs_group_name = var.cloudwatch_logs_group_name, region = data.aws_region.current.name })
 
   ebs_block_device {
     delete_on_termination = true

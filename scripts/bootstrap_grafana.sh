@@ -1,7 +1,7 @@
 #!/bin/bash
 KEY_NAME=$(echo $RANDOM)
-GRAFANA_WORKSPACE_ID=$(terraform output -raw grafana_workspace_id)
-PRIVATE_GETH_NODE_IP=$(terraform output -raw private_ip)
+GRAFANA_WORKSPACE_ID=$1
+PRIVATE_GETH_NODE_IP=$2
 GRAFANA_API_KEY=$(aws grafana create-workspace-api-key --key-name $KEY_NAME --key-role "ADMIN" --seconds-to-live 15 --workspace-id $GRAFANA_WORKSPACE_ID --query 'key' --output text)
 
 echo "creating datasource..."
@@ -14,4 +14,6 @@ sed -e "s/\"uid\": \"\${DS_VICTORIAMETRICS}\"/\"uid\": \"$DATASOURCE_UID\"/g" gr
 echo "creating dashboard..."
 curl -X POST https://$GRAFANA_WORKSPACE_ID.grafana-workspace.us-east-1.amazonaws.com/api/dashboards/db -H 'Accept: application/json' -H 'Content-Type: application/json' -H "Authorization: Bearer $GRAFANA_API_KEY" -d @grafana_dashboard.json
 
-aws grafana delete-workspace-api-key --key-name $KEY_NAME --workspace-id $GRAFANA_WORKSPACE_ID
+rm grafana_dashboard.json
+
+aws grafana delete-workspace-api-key --key-name $KEY_NAME --workspace-id $GRAFANA_WORKSPACE_ID > /dev/null
