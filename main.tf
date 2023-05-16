@@ -125,6 +125,13 @@ module "geth_sg" {
       description = "JSON RPC"
       cidr_blocks = "0.0.0.0/0"
     },
+    {
+      from_port   = 3500
+      to_port     = 3500
+      protocol    = "tcp"
+      description = "JSON RPC (Prysm)"
+      cidr_blocks = "0.0.0.0/0"
+    },
   ]
 
   ingress_with_source_security_group_id = [
