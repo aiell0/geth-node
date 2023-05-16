@@ -1,6 +1,6 @@
 # Validation Cloud Tech Challenge
 
-![Architecture](./images/geth_node.pdf)
+![Architecture](/images/geth_node.pdf)
 
 ## Introduction
 This repository contains code that will create infrastructure for running a Geth node in AWS.
