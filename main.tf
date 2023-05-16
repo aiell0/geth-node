@@ -125,13 +125,6 @@ module "geth_sg" {
       description = "JSON RPC"
       cidr_blocks = "0.0.0.0/0"
     },
-    {
-      from_port   = 3500
-      to_port     = 3500
-      protocol    = "tcp"
-      description = "JSON RPC (Prysm)"
-      cidr_blocks = "0.0.0.0/0"
-    },
   ]
 
   ingress_with_source_security_group_id = [
@@ -190,7 +183,7 @@ data "aws_ami" "ubuntu" {
 
 resource "aws_grafana_role_association" "this" {
   role         = "ADMIN"
-  user_ids     = ["90676d91f3-fb8de10e-4c5e-4d9a-86ce-2a310c19bd01"]
+  user_ids     = var.sso_user_ids
   workspace_id = aws_grafana_workspace.this.id
 }
 
@@ -251,6 +244,12 @@ resource "aws_instance" "node" {
     iops                  = 10000
     volume_size           = 2000
     volume_type           = "gp3"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      ami
+    ]
   }
 
   tags = {

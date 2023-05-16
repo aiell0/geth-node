@@ -3,13 +3,13 @@ variable "cloudwatch_logs_group_name" {
   type        = string
 }
 
-variable "subnet_id" {
-  description = "ID of subnet to deploy node"
-  type        = string
-}
-
 variable "instance_type" {
   description = "Instance type of node"
   default     = "m6a.xlarge"
   type        = string
+}
+
+variable "sso_user_ids" {
+  description = "List of SSO user ids to allow access to Grafana"
+  type        = list(string)
 }

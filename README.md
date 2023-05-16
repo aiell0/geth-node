@@ -118,3 +118,11 @@ Inside the `scripts/` directory you will find the `bootstrap_grafana.sh` script,
 ### Logging in to the Instance
 The SSH port is disabled, however, you can use [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html) to log in. It is recommended to install the [plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) first, and then log in using the following AWS CLI command:
 * `aws ssm start-session --target <instance_id>`
+
+## Part 2
+----------------------------------------------------------------------------------------------------------------------
+
+### Run Go Program
+The program `main.go` is to be used to check the node's connected peers. To use the program, use it like so:
+1. `go build`
+2. `./geth-node-peers -ip=<node_public_ip>` where `node_public_ip` is the public IP address of the geth node as listed in the Terraform output.
