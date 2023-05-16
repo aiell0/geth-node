@@ -19,18 +19,12 @@ type Network struct {
 	Static        bool   `json:"static"`
 }
 
-type Protocol struct {
-	Version int `json:"version"`
-}
-
 type Result struct {
 	Enr       string              `json:"enr"`
 	Enode     string              `json:"enode"`
 	ID        string              `json:"id"`
 	Name      string              `json:"name"`
-	Caps      []string            `json:"caps"`
 	Network   Network             `json:"network"`
-	Protocols map[string]Protocol `json:"protocols"`
 }
 
 type Root struct {
@@ -46,6 +40,15 @@ func main() {
 	if *ip == "" {
 		panic("The 'ip' flag is required.")
 	}
+
+	for {
+		getPeers(ip)
+		fmt.Println("Sleeping for 5 seconds...")
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func getPeers(ip *string) {
 
 	data := `{"jsonrpc":"2.0","method":"admin_peers","id":0}`
 	body := bytes.NewBuffer([]byte(data))
@@ -80,14 +83,6 @@ func main() {
 		panic("Error reading HTTP response")
 	}
 
-	for {
-		printResults(root)
-		fmt.Println("Sleeping for 5 seconds...")
-		time.Sleep(5 * time.Second)
-	}
-}
-
-func printResults(root Root) {
 	for _, result := range root.Result {
 		fmt.Println("***********************************************************************************************")
 		fmt.Println("Enr: ", result.Enr)
@@ -95,22 +90,11 @@ func printResults(root Root) {
 		fmt.Println("ID: ", result.ID)
 		fmt.Println("Name: ", result.Name)
 
-		// Loop through caps
-		for _, cap := range result.Caps {
-			fmt.Println("Cap: ", cap)
-		}
-
 		// Access network details
 		fmt.Println("Network LocalAddress: ", result.Network.LocalAddress)
 		fmt.Println("Network RemoteAddress: ", result.Network.RemoteAddress)
 		fmt.Println("Network Inbound: ", result.Network.Inbound)
 		fmt.Println("Network Trusted: ", result.Network.Trusted)
 		fmt.Println("Network Static: ", result.Network.Static)
-
-		// Loop through protocols
-		for protocolName, protocol := range result.Protocols {
-			fmt.Println("Protocol Name: ", protocolName)
-			fmt.Println("Protocol Version: ", protocol.Version)
-		}
 	}
 }
