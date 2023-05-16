@@ -20,11 +20,11 @@ type Network struct {
 }
 
 type Result struct {
-	Enr       string              `json:"enr"`
-	Enode     string              `json:"enode"`
-	ID        string              `json:"id"`
-	Name      string              `json:"name"`
-	Network   Network             `json:"network"`
+	Enr     string  `json:"enr"`
+	Enode   string  `json:"enode"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	Network Network `json:"network"`
 }
 
 type Root struct {
