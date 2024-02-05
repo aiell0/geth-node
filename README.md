@@ -1,4 +1,4 @@
-# Validation Cloud Tech Challenge
+# Geth Node
 This repository contains code that will create infrastructure for running a Geth node in AWS.
 
 ## Architecture
